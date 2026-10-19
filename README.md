@@ -155,6 +155,36 @@ The `./md2plain` script in the repository root is a development launcher; it
 runs the package from `.venv`. Installed users get the `md2plain` command from
 `pyproject.toml`.
 
+## Releasing
+
+Releases are published by GitHub Actions through
+[PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/), so no
+API token is stored in the repository.
+
+One-time setup on PyPI: open the `md2plain` project, go to
+**Settings → Publishing**, and add a trusted publisher with:
+
+| Field | Value |
+|---|---|
+| Owner | `hoshF` |
+| Repository | `md2plain` |
+| Workflow | `release.yml` |
+| Environment | `pypi` |
+
+To cut a release:
+
+1. Bump `__version__` in `src/md2plain/__init__.py`.
+2. Add an entry to [CHANGELOG.md](CHANGELOG.md).
+3. Commit, tag, and push:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The `Release` workflow then checks that the tag matches the package version,
+runs the tests, builds the sdist and wheel, and publishes them to PyPI.
+
 ## License
 
 [MIT](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
