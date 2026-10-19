@@ -1,6 +1,7 @@
 # md2plain
 
 [![CI](https://github.com/hoshF/md2plain/actions/workflows/ci.yml/badge.svg)](https://github.com/hoshF/md2plain/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/md2plain.svg)](https://pypi.org/project/md2plain/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 [![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](pyproject.toml)
@@ -59,14 +60,20 @@ This is a short note with a link (https://example.com).
 With [pipx](https://pipx.pypa.io/):
 
 ```bash
-pipx install .
+pipx install md2plain
 ```
 
-Or from a checkout, in a virtual environment:
+Or with pip:
+
+```bash
+pip install md2plain
+```
+
+For development, install from a checkout:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install -e ".[dev]"
 ```
 
 ## Usage
