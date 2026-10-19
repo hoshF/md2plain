@@ -204,23 +204,24 @@ class Inline(unittest.TestCase):
 
     def test_url_label_with_tracking_param(self):
         self.assertEqual(
-            r("[https://e.com](https://e.com?utm_source=x)\n"), "https://e.com\n"
+            r("[https://e.com](https://e.com?utm_source=x)\n"),
+            "https://e.com (https://e.com?utm_source=x)\n",
         )
 
     def test_bare_url_not_duplicated(self):
         self.assertEqual(r("https://e.com\n"), "https://e.com\n")
 
-    def test_mailto_not_duplicated(self):
-        self.assertEqual(r("<a@b.com>\n"), "a@b.com\n")
+    def test_mailto_target_kept(self):
+        self.assertEqual(r("<a@b.com>\n"), "a@b.com (mailto:a@b.com)\n")
 
     def test_unsafe_scheme_not_linked(self):
         self.assertEqual(r("[x](javascript:alert(1))\n"), "[x](javascript:alert(1))\n")
 
     def test_image_alt(self):
-        self.assertEqual(r("![alt text](i.png)\n"), "alt text\n")
+        self.assertEqual(r("![alt text](i.png)\n"), "[图片：alt text] (i.png)\n")
 
     def test_emphasis_stripped(self):
-        self.assertEqual(r("**bold** *it* ~~gone~~\n"), "bold it gone\n")
+        self.assertEqual(r("**bold** *it* ~~gone~~\n"), "bold it ~~gone~~\n")
 
     def test_html_is_literal(self):
         self.assertEqual(r("<b>x</b>\n"), "<b>x</b>\n")
@@ -297,7 +298,9 @@ class Cli(SampleCase):
         path = Path(self.tmp.name) / "bad.md"
         path.write_bytes(b"hello \xff world\n")
         proc = run_cli(str(path), "--print", "--no-copy")
-        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("invalid UTF-8", proc.stderr)
 
     def test_directory_input(self):
         proc = run_cli(self.tmp.name, "--no-copy")
@@ -385,8 +388,6 @@ class Fuzz(unittest.TestCase):
             self.assertTrue(out.endswith("\n"))
             self.assertNotIn("\x00", out)
             self.assertNotIn("\r", out)
-            for line in out.splitlines():
-                self.assertEqual(line, line.rstrip())
 
 
 @unittest.skipUnless(MACOS, "clipboard tests need macOS")

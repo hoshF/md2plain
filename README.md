@@ -8,10 +8,14 @@
 
 **Markdown in, plain-text email out.**
 
-`md2plain` renders Markdown as a plain-text email and copies it to the macOS
-clipboard as `text/plain`. Paste it into Gmail's **Plain text mode** and the
-message is sent as a real `text/plain` message: hard-wrapped, with no HTML,
-no fonts, and no client-side reflow.
+`md2plain` turns a Markdown letter into a plain-text email body, then copies
+it to the macOS clipboard or writes it to a file or stdout. It preserves
+complete link targets, code whitespace, and email signature separators while
+wrapping ordinary text to a target of 75 display columns.
+
+Paste the result into your mail client's plain-text compose mode. The tool
+produces the body text; your mail client controls the final MIME format,
+encoding, and display.
 
 ## Demo
 
@@ -44,16 +48,24 @@ This is a short note with a link (https://example.com).
 
 ## Why
 
-- Gmail's normal compose always sends HTML, even when you paste plain text.
-- Rich text copied from Typora carries its own CSS, which mail clients mangle.
-- Plain text has no automatic reflow, so the sender has to control line width.
-- A 75-column limit leaves room for `> ` quote prefixes and stays within
-  RFC 5322's recommended 78 characters.
+- Write letters in Markdown without carrying rich-text styling into email.
+- Keep the destination of every link, including its query and fragment.
+- Keep greetings, addresses, and signatures on their own lines by default.
+- Produce readable text with a consistent wrapping target. Complete URLs,
+  email addresses, inline code, and code blocks may exceed that target to
+  preserve their content.
+
+The 75-column setting measures display width, not the character count or
+encoded line length of a complete email. It does not guarantee compliance
+with [RFC 5322's line-length rules](https://www.rfc-editor.org/rfc/rfc5322#section-2.1.1).
 
 ## Requirements
 
 - macOS (the clipboard is written through AppKit)
 - Python 3.10 or newer
+
+Rendering to stdout or a file with copying disabled also works without the
+macOS clipboard backend.
 
 ## Install
 
@@ -82,28 +94,68 @@ python3 -m venv .venv
 md2plain note.md
 ```
 
-Then in Gmail: open the compose window, click the three-dot menu, choose
-**Plain text mode**, and press `Cmd+V`.
+In Gmail, enable **Plain text mode** in the compose window before pasting.
+Other clients have their own plain-text compose setting. A plain-text
+clipboard does not force the client to send a plain-text-only message.
 
-To verify, send a message to yourself and use **Show original**. The message
-should contain only:
+To inspect a message you have sent, view its original source and check its
+MIME content types. A plain-text body is identified by a header such as:
 
 ```text
 Content-Type: text/plain; charset="UTF-8"
 ```
 
-No `multipart/alternative`, no `text/html`.
+HTML alternatives, attachments, and other MIME structure depend on the mail
+client. Display wrapping and quote collapsing also depend on the client.
+
+Other output combinations:
+
+```bash
+# Print without changing the clipboard.
+md2plain note.md --print
+
+# Save and copy to the clipboard.
+md2plain note.md -o note.txt
+
+# Save without changing the clipboard.
+md2plain note.md -o note.txt --no-copy
+
+# Print and save without changing the clipboard.
+md2plain note.md --print -o note.txt
+
+# Read Markdown from stdin; a UTF-8 BOM is accepted here too.
+cat note.md | md2plain - --print
+
+# Refresh the selected outputs after stable file changes.
+md2plain note.md --watch
+```
+
+See [examples/email.md](examples/email.md) and its rendered
+[plain-text result](examples/email.txt) for a bilingual letter with links,
+quotes, code, and signatures.
 
 ## Options
 
 | Option | Description |
 |---|---|
-| `--width N` | Line width in columns (default: 75) |
-| `--watch` | Update the clipboard whenever the file is saved |
-| `--print` | Write to stdout instead of the clipboard |
-| `-o, --output FILE` | Also write the plain text to a file |
-| `--soft-breaks` | Treat single newlines as spaces |
+| `--width N` | Target display width (default: 75; minimum: 1) |
+| `--watch` | Refresh selected outputs after a file change stays stable for 0.5 seconds; requires a file |
+| `--print` | Write to stdout and disable clipboard copying |
+| `-o, --output FILE` | Also save to a UTF-8 text file; copying remains enabled unless disabled |
+| `--no-copy` | Disable clipboard copying; use with `--print` or `-o` |
+| `--soft-breaks` | Join ordinary paragraph soft newlines with spaces; code and signature separators stay intact |
 | `--version` | Print the version and exit |
+
+Input must be valid UTF-8, with or without a BOM. Invalid encoding is an
+error; it is never silently replaced with different characters. Failed
+input does not change the output file or clipboard. Output cannot refer to
+the input file, including through a symbolic or hard link. Files are saved
+using an atomic replacement to avoid leaving a partially written result.
+
+Watch mode waits for a change to remain stable for 0.5 seconds before
+converting it. Temporary empty files, unreadable files, and decoding errors
+keep the last successful result; watching continues when the file is saved
+again or recreated. Clipboard failures are reported as errors.
 
 ## Output format
 
@@ -112,34 +164,52 @@ No `multipart/alternative`, no `text/html`.
 | `# Heading` | heading + `====` underline |
 | `## Heading` | heading + `----` underline |
 | `### Heading` | heading + `~~~~` underline |
-| Paragraph | hard-wrapped at 75 columns (CJK counts as two) |
+| Paragraph | wrapped to a target of 75 display columns |
 | `- item` | `* item`, with hanging indent |
 | `1. item` | `1. item` |
 | `> quote` | `> quote` |
-| Code block | indented by four spaces |
-| `[text](url)` | `text (url)` |
-| Table | column-aligned plain text |
+| Code block | indented by four spaces; parser-provided whitespace and line breaks kept; no wrapping |
+| Inline code | parser-provided spaces kept; not split across lines |
+| `[text](url)` | `text (url)`; full target retained in every context |
+| `~~deleted~~` | `~~deleted~~` |
+| `![alt](src)` | `[图片：alt] (src)`; empty alt uses `[图片] (src)` |
+| Table | naturally aligned columns when they fit; otherwise one `header: value` line per column, with a blank line between records |
 | Single newline | kept (signatures and dates stay on their own lines) |
+| Exact `-- ` signature separator | kept, including the trailing space and inside blockquotes |
+
+Links keep their full query strings, fragments, and relative paths. The
+repeated target is omitted only when identical to the label. URLs and email
+addresses move to the next line as a whole when needed; they may exceed the width.
+Image references retain their source but do not attach or embed the image.
+Tables containing tabs also use field records, preserving the tab characters
+without depending on their position in a column.
+
+Lists and blockquotes reserve room for their prefixes before wrapping.
+Unicode text wraps at complete grapheme clusters, so a combining accent or
+joined emoji is not split. Display width is estimated with `wcwidth` for
+monospaced text; actual rendering varies with fonts and mail clients.
 
 ## How it works
 
 1. `markdown-it-py` parses CommonMark plus tables, strikethrough, and
    autolinks.
-2. `src/md2plain/render.py` wraps text by display width (CJK counts as two
-   columns), renders headings, lists, quotes, and tables.
-3. `src/md2plain/cli.py` reads UTF-8 (BOM tolerant) and writes exactly one
-   clipboard type: `text/plain`.
+2. The renderer retains protected content through wrapping, handles email
+   signature separators before Markdown heading rules, and renders headings,
+   lists, quotes, and tables.
+3. The CLI strictly decodes UTF-8 (BOM tolerant), saves files atomically, and
+   writes plain text to the selected outputs.
 
 ## Limitations
 
-- macOS only; the clipboard backend is AppKit.
-- Plain text has no bold, italics, or clickable links. Link URLs are kept as
-  text, and links inside headings or table cells lose the URL.
-- Images become alt text. YAML front matter, footnotes, math, and Mermaid
-  diagrams are not converted.
-- Tables are aligned with spaces, so proportional fonts break the alignment.
-- Gmail may collapse `>` quote blocks behind a three-dot control; this is
-  display only and the content stays intact.
+- Clipboard copying requires macOS and AppKit.
+- Bold and italic styling is removed. Link destinations remain text; the
+  mail client decides whether to make them clickable.
+- Images are references, not attachments. YAML front matter, footnotes,
+  math, and Mermaid diagrams do not have dedicated conversion support.
+- Tables use spaces, so proportional fonts may break their alignment.
+- The tool does not generate `.eml`, set MIME headers, or send mail. Pure
+  `text/plain` delivery must be selected and checked in the mail client.
+- Clients may reflow text or collapse quoted sections in their display.
 
 ## Development
 
@@ -178,8 +248,8 @@ To cut a release:
 3. Commit, tag, and push:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 The `Release` workflow then checks that the tag matches the package version,
