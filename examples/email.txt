@@ -1,0 +1,43 @@
+十月交付确认 / October handoff
+==============================
+
+王女士，您好：
+
+感谢您确认本次交付安排。原定 ~~周一~~ 周二 完成验收，以下是需要留意的事项。
+
+请从交付页面
+(https://example.com/delivery?project=autumn&token=demo-token#review)查看文
+件；本地说明
+(docs/handoff.md#checklist)仅是路径引用，不会自动成为邮件附件。
+
+如需英文沟通，请联系 handoff@example.com
+(mailto:handoff@example.com)。验证字段是
+delivery  confirmed，中间的两个空格需要保留。
+
+事项      安排
+--------  --------
+文件检查  周二上午
+意见汇总  周二下午
+
+[图片：架构示意] (images/architecture.png)
+
+下面是供技术同事参考的代码，空行和字符串内的空格均有意保留：
+
+    message = "delivery  confirmed"
+    
+    
+    print(message)
+
+您此前提到：
+
+> Please retain the original download address and confirm the final date.
+> -- 
+> Alice
+
+我会按以上安排准备材料。如有变动，请直接回复本邮件。
+
+谢谢！
+-- 
+陈晓 / Xiao Chen
+Delivery team
+handoff@example.com (mailto:handoff@example.com)

@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
-"""Convert Markdown to a plain-text email and copy it to the macOS clipboard.
+"""Convert Markdown to a plain-text email body for pasting or saving.
 
-Only text/plain is placed on the clipboard, so pasting into Gmail's
-"Plain text mode" produces a real text/plain message.
-
-Usage:
-    md2plain note.md
-    md2plain note.md --width 72
-    md2plain note.md --watch
-    md2plain note.md --print
-    md2plain note.md -o out.txt
+The clipboard contains plain text. The mail client still controls the final
+message format, so enable its plain-text mode before pasting.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
+import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import __version__
 from .render import render_plain
+
+WATCH_POLL_SECONDS = 0.1
+WATCH_STABLE_SECONDS = 0.5
+
+
+class CliError(Exception):
+    """An actionable input, output, or clipboard failure."""
 
 
 def positive_width(value: str) -> int:
@@ -32,18 +35,91 @@ def positive_width(value: str) -> int:
 
 
 def read_input(path: str) -> str:
-    if path == "-":
-        return sys.stdin.read()
+    """Decode UTF-8 strictly, accepting a BOM for files and standard input."""
+    label = "stdin" if path == "-" else path
     try:
-        return Path(path).read_text(encoding="utf-8-sig", errors="replace")
-    except FileNotFoundError:
-        sys.exit(f"File not found: {path}")
+        if path == "-":
+            stream = getattr(sys.stdin, "buffer", sys.stdin)
+            raw = stream.read()
+        else:
+            raw = Path(path).read_bytes()
+    except FileNotFoundError as exc:
+        raise CliError(f"File not found: {path}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise CliError(f"Cannot read {label}: {exc}") from exc
+
+    if isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise CliError(
+                f"Cannot decode {label}: invalid UTF-8 at byte {exc.start + 1} "
+                f"({exc.reason})."
+            ) from exc
+    else:
+        # StringIO and other already decoded streams have no binary buffer.
+        text = raw
+    text = text.removeprefix("\ufeff")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def validate_output(input_path: str, output_path: str | None) -> None:
+    """Protect the source even when either path is a link or changes in watch."""
+    if input_path == "-" or not output_path:
+        return
+    source, target = Path(input_path), Path(output_path)
+    try:
+        same = source.resolve() == target.resolve()
+        if not same:
+            try:
+                same = source.samefile(target)
+            except FileNotFoundError:
+                pass
+    except (OSError, RuntimeError) as exc:
+        raise CliError(f"Cannot check output path {output_path}: {exc}") from exc
+    if same:
+        raise CliError("Input and output must be different files.")
+
+
+def save_output(text: str, args: argparse.Namespace) -> None:
+    """Replace a completed temporary file, leaving previous output on failure."""
+    validate_output(args.input, args.output)
+    target = Path(args.output)
+    temporary: Path | None = None
+    try:
+        try:
+            mode = stat.S_IMODE(target.stat().st_mode)
+        except FileNotFoundError:
+            mode = None
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=target.parent,
+            prefix=".md2plain-",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            temporary.chmod(mode)
+        validate_output(args.input, args.output)
+        os.replace(temporary, target)
     except OSError as exc:
-        sys.exit(f"Cannot read {path}: {exc}")
+        raise CliError(f"Cannot write {args.output}: {exc}") from exc
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                # Keep the actionable save error if cleanup also fails.
+                pass
 
 
 def copy_text(text: str) -> None:
-    """Write plain text only, so Gmail's plain-text mode gets it verbatim."""
+    """Write plain text and verify that the pasteboard accepted it."""
     from AppKit import NSPasteboard, NSPasteboardTypeString
 
     name = os.environ.get("MD2PLAIN_PASTEBOARD", "general")
@@ -52,29 +128,91 @@ def copy_text(text: str) -> None:
         if name == "general"
         else NSPasteboard.pasteboardWithName_(name)
     )
+    if board is None:
+        raise CliError("Cannot access the clipboard.")
     board.clearContents()
     board.declareTypes_owner_([NSPasteboardTypeString], None)
-    board.setString_forType_(text, NSPasteboardTypeString)
+    if not board.setString_forType_(text, NSPasteboardTypeString):
+        raise CliError("The clipboard did not accept the plain text.")
 
 
 def finish(text: str, args: argparse.Namespace) -> None:
     if args.output:
-        Path(args.output).write_text(text, encoding="utf-8")
+        save_output(text, args)
     if args.show:
-        sys.stdout.write(text)
-    if args.no_copy:
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except (OSError, UnicodeError) as exc:
+            raise CliError(f"Cannot write stdout: {exc}") from exc
+    if args.show or args.no_copy:
         return
 
     try:
         copy_text(text)
-    except ImportError:
-        sys.exit("pyobjc is not installed; use --print or -o instead")
+    except ImportError as exc:
+        raise CliError(
+            "pyobjc is not installed; use --print or --no-copy to skip the clipboard."
+        ) from exc
+    except CliError:
+        raise
+    except Exception as exc:
+        raise CliError(f"Cannot copy to the clipboard: {exc}") from exc
 
     print(
         f"Copied {len(text.splitlines())} lines / {len(text)} chars of plain text. "
-        "Enable Gmail's Plain text mode, then press Cmd+V.",
+        "Enable your mail client's plain-text mode, then paste.",
         file=sys.stderr,
     )
+
+
+def file_revision(path: str) -> tuple[int, int, int, int, int]:
+    try:
+        info = Path(path).stat()
+    except FileNotFoundError as exc:
+        raise CliError(f"File not found: {path}") from exc
+    except OSError as exc:
+        raise CliError(f"Cannot read {path}: {exc}") from exc
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def watch_input(args: argparse.Namespace, convert: Callable[[str], None]) -> None:
+    """Publish only stable nonempty input, retrying failures without losing output."""
+    pending: tuple[str, tuple[int, int, int, int, int]] | None = None
+    stable_since = 0.0
+    last_success: str | None = None
+    last_error: str | None = None
+    while True:
+        try:
+            validate_output(args.input, args.output)
+            before = file_revision(args.input)
+            source = read_input(args.input)
+            after = file_revision(args.input)
+            if before != after:
+                pending = None
+            elif not source.strip():
+                raise CliError("Input is empty; waiting for a nonempty save.")
+            else:
+                now = time.monotonic()
+                observed = (source, after)
+                if observed != pending:
+                    pending = observed
+                    stable_since = now
+                elif now - stable_since >= WATCH_STABLE_SECONDS:
+                    if source != last_success:
+                        convert(source)
+                        last_success = source
+                    last_error = None
+        except CliError as exc:
+            pending = None
+            message = str(exc)
+            if message != last_error:
+                print(
+                    f"{message} Watching for valid input and retrying failed outputs.",
+                    file=sys.stderr,
+                )
+                last_error = message
+        time.sleep(WATCH_POLL_SECONDS)
 
 
 def main() -> int:
@@ -88,13 +226,16 @@ def main() -> int:
     parser.add_argument("input", help="Markdown file, or - for stdin")
     parser.add_argument("-o", "--output", help="also write the plain text to a file")
     parser.add_argument(
-        "--print", dest="show", action="store_true", help="write to stdout"
+        "--print",
+        dest="show",
+        action="store_true",
+        help="write to stdout without copying",
     )
     parser.add_argument(
         "--no-copy", action="store_true", help="do not touch the clipboard"
     )
     parser.add_argument(
-        "--watch", action="store_true", help="update the clipboard on save"
+        "--watch", action="store_true", help="update after a stable save"
     )
     parser.add_argument(
         "--width", type=positive_width, default=75, help="line width (default: 75)"
@@ -109,33 +250,24 @@ def main() -> int:
     if args.watch and args.input == "-":
         parser.error("--watch requires a file, not stdin")
 
-    text = read_input(args.input)
-    if not text.strip():
-        sys.exit("Input is empty.")
+    def convert(source: str) -> None:
+        finish(render_plain(source, args.width, not args.soft_breaks), args)
 
-    preserve_breaks = not args.soft_breaks
-
-    def convert(src: str) -> None:
-        finish(render_plain(src, args.width, preserve_breaks), args)
-
-    if not args.watch:
-        convert(text)
-        return 0
-
-    last_mtime: float | None = None
     try:
-        while True:
+        validate_output(args.input, args.output)
+        if args.watch:
             try:
-                mtime = os.stat(args.input).st_mtime
-            except FileNotFoundError:
-                time.sleep(1)
-                continue
-            if mtime != last_mtime:
-                convert(read_input(args.input))
-                last_mtime = mtime
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nStopped watching.", file=sys.stderr)
+                watch_input(args, convert)
+            except KeyboardInterrupt:
+                print("\nStopped watching.", file=sys.stderr)
+        else:
+            source = read_input(args.input)
+            if not source.strip():
+                raise CliError("Input is empty.")
+            convert(source)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     return 0
 
 

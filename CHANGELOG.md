@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-19
+
+### Changed
+
+- Preserve full link targets, including queries, fragments, relative paths,
+  and links in headings and tables. Keep image sources as text references
+  and retain strikethrough markers.
+- Wrap ordinary text by Unicode grapheme and display width without splitting
+  URLs, email addresses, or inline code. Code blocks retain parser-provided
+  whitespace and line breaks and may exceed the requested width.
+- Preserve exact email signature separators (`-- `), including in quoted
+  text, without treating them as Markdown heading underlines. Keep multiline
+  signatures separate even with `--soft-breaks`.
+- Keep aligned tables at their natural widths when they fit; render wider
+  tables as ordered `header: value` records instead of truncating columns.
+- Make `--print` disable clipboard copying, including when combined with
+  `-o`. Document `--no-copy` and all output combinations.
+- Require valid UTF-8 for both files and stdin, accepting an optional BOM.
+  Reject input/output aliases and save output files atomically.
+- Debounce watch changes for 0.5 seconds, retain the last successful result
+  through temporary input errors or empty files, and report clipboard
+  failures.
+- Clarify that output is an email body with a display-width target; MIME
+  format, transport compliance, and final display depend on the mail client.
+
+### Added
+
+- Regression tests for content preservation, Unicode wrapping, CLI output
+  behavior, encoding errors, safe file output, and watch recovery.
+- A bilingual example letter and its plain-text rendering.
+
 ## [0.1.0] - 2026-10-18
 
 ### Added
