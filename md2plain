@@ -1,4 +1,8 @@
 #!/bin/sh
-# Usage: ./md2plain note.md [--width 75] [--watch]
+# Development launcher. Install with `pipx install .` for the real command.
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "$DIR/.venv/bin/python" "$DIR/md2plain.py" "$@"
+if [ ! -x "$DIR/.venv/bin/python" ]; then
+  echo "Missing .venv. Run: python3 -m venv .venv && .venv/bin/pip install -e ." >&2
+  exit 1
+fi
+exec "$DIR/.venv/bin/python" -m md2plain "$@"

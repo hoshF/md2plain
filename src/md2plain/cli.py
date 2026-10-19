@@ -5,11 +5,11 @@ Only text/plain is placed on the clipboard, so pasting into Gmail's
 "Plain text mode" produces a real text/plain message.
 
 Usage:
-    ./md2plain note.md
-    ./md2plain note.md --width 72
-    ./md2plain note.md --watch
-    ./md2plain note.md --print
-    ./md2plain note.md -o out.txt
+    md2plain note.md
+    md2plain note.md --width 72
+    md2plain note.md --watch
+    md2plain note.md --print
+    md2plain note.md -o out.txt
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ import sys
 import time
 from pathlib import Path
 
-from plaintext import render_plain
+from . import __version__
+from .render import render_plain
 
 
 def positive_width(value: str) -> int:
@@ -78,7 +79,11 @@ def finish(text: str, args: argparse.Namespace) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Convert Markdown to plain-text email and copy it to the clipboard."
+        prog="md2plain",
+        description="Convert Markdown to plain-text email and copy it to the clipboard.",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("input", help="Markdown file, or - for stdin")
     parser.add_argument("-o", "--output", help="also write the plain text to a file")

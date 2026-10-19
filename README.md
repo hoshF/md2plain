@@ -1,25 +1,102 @@
 # md2plain
 
-Turn Markdown from Typora into a true plain-text email (`text/plain`) and
-put it on the macOS clipboard.
+[![CI](https://github.com/hoshF/md2plain/actions/workflows/ci.yml/badge.svg)](https://github.com/hoshF/md2plain/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](pyproject.toml)
+
+**Markdown in, plain-text email out.**
+
+`md2plain` renders Markdown as a plain-text email and copies it to the macOS
+clipboard as `text/plain`. Paste it into Gmail's **Plain text mode** and the
+message is sent as a real `text/plain` message: hard-wrapped, with no HTML,
+no fonts, and no client-side reflow.
+
+## Demo
+
+Input:
+
+```markdown
+# Quarterly Update
+
+This is a **short** note with a [link](https://example.com).
+
+* one
+* two
+
+> quoted
+```
+
+Output:
+
+```text
+Quarterly Update
+================
+
+This is a short note with a link (https://example.com).
+
+* one
+* two
+
+> quoted
+```
+
+## Why
+
+- Gmail's normal compose always sends HTML, even when you paste plain text.
+- Rich text copied from Typora carries its own CSS, which mail clients mangle.
+- Plain text has no automatic reflow, so the sender has to control line width.
+- A 75-column limit leaves room for `> ` quote prefixes and stays within
+  RFC 5322's recommended 78 characters.
+
+## Requirements
+
+- macOS (the clipboard is written through AppKit)
+- Python 3.10 or newer
+
+## Install
+
+With [pipx](https://pipx.pypa.io/):
+
+```bash
+pipx install .
+```
+
+Or from a checkout, in a virtual environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
 
 ## Usage
 
 ```bash
-./md2plain note.md
+md2plain note.md
 ```
 
 Then in Gmail: open the compose window, click the three-dot menu, choose
 **Plain text mode**, and press `Cmd+V`.
 
-To verify, send a message to yourself and use **Show original**. The
-message should contain only:
+To verify, send a message to yourself and use **Show original**. The message
+should contain only:
 
 ```text
 Content-Type: text/plain; charset="UTF-8"
 ```
 
 No `multipart/alternative`, no `text/html`.
+
+## Options
+
+| Option | Description |
+|---|---|
+| `--width N` | Line width in columns (default: 75) |
+| `--watch` | Update the clipboard whenever the file is saved |
+| `--print` | Write to stdout instead of the clipboard |
+| `-o, --output FILE` | Also write the plain text to a file |
+| `--soft-breaks` | Treat single newlines as spaces |
+| `--version` | Print the version and exit |
 
 ## Output format
 
@@ -35,42 +112,42 @@ No `multipart/alternative`, no `text/html`.
 | Code block | indented by four spaces |
 | `[text](url)` | `text (url)` |
 | Table | column-aligned plain text |
-| Single newline | **kept** (signatures and dates stay on their own lines) |
+| Single newline | kept (signatures and dates stay on their own lines) |
 
-## Options
+## How it works
 
-```bash
-./md2plain note.md --width 72      # line width (default: 75)
-./md2plain note.md --watch         # update the clipboard whenever the file is saved
-./md2plain note.md --print         # print only, do not touch the clipboard
-./md2plain note.md -o out.txt      # also write the plain text to a file
-./md2plain note.md --soft-breaks   # treat single newlines as spaces
-```
+1. `markdown-it-py` parses CommonMark plus tables, strikethrough, and
+   autolinks.
+2. `src/md2plain/render.py` wraps text by display width (CJK counts as two
+   columns), renders headings, lists, quotes, and tables.
+3. `src/md2plain/cli.py` reads UTF-8 (BOM tolerant) and writes exactly one
+   clipboard type: `text/plain`.
 
-Keep the width at 75: each quote level adds `> `, so a 75-column body
-quoted once is 77 columns, still within RFC 5322's recommended 78.
+## Limitations
 
-## Install
+- macOS only; the clipboard backend is AppKit.
+- Plain text has no bold, italics, or clickable links. Link URLs are kept as
+  text, and links inside headings or table cells lose the URL.
+- Images become alt text. YAML front matter, footnotes, math, and Mermaid
+  diagrams are not converted.
+- Tables are aligned with spaces, so proportional fonts break the alignment.
+- Gmail may collapse `>` quote blocks behind a three-dot control; this is
+  display only and the content stays intact.
+
+## Development
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/ruff check src tests
+.venv/bin/black --check src tests
 ```
 
-## Tests
+The `./md2plain` script in the repository root is a development launcher; it
+runs the package from `.venv`. Installed users get the `md2plain` command from
+`pyproject.toml`.
 
-```bash
-.venv/bin/python -m unittest test_md2plain -v
-```
+## License
 
-59 tests cover the renderer, CLI, clipboard, edge cases and performance.
-
-## Notes
-
-- The clipboard holds `text/plain` only; no HTML is added.
-- Gmail's plain-text mode is per message; there is no global default.
-- Quotes use `>`, the standard plain-text marker. Gmail may collapse them
-  behind a three-dot control; this is display only and the content stays
-  intact.
-- Plain text has no bold, italics, or clickable links; local images, math,
-  and Mermaid diagrams are not converted.
+[MIT](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.

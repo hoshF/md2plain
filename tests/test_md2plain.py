@@ -10,12 +10,10 @@ import time
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
+from md2plain.render import disp_width, render_plain
 
-from plaintext import disp_width, render_plain
-
-CLI = [sys.executable, str(ROOT / "md2plain.py")]
+ROOT = Path(__file__).resolve().parents[1]
+CLI = [sys.executable, "-m", "md2plain"]
 MACOS = sys.platform == "darwin"
 
 SAMPLE_MD = """\
