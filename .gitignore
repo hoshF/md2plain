@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Local test letters
+test.md
+test2.md
+test3.md

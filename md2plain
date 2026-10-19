@@ -1,0 +1,4 @@
+#!/bin/sh
+# Usage: ./md2plain note.md [--width 75] [--watch]
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$DIR/.venv/bin/python" "$DIR/md2plain.py" "$@"
