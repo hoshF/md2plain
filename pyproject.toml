@@ -43,6 +43,20 @@ Issues = "https://github.com/hoshF/md2plain/issues"
 [tool.hatch.version]
 path = "src/md2plain/__init__.py"
 
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/examples",
+  "/.github",
+  "/.gitignore",
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/README.md",
+  "/md2plain",
+  "/pyproject.toml",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/md2plain"]
 

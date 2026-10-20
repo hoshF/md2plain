@@ -227,6 +227,99 @@ class WaylandClipboard(unittest.TestCase):
                 self.assertNotEqual(forwarded[0], forwarded[1])
                 self.assertEqual(self.spawn.call_count, 2)
 
+    def test_watch_preflight_accepts_named_socket_without_consuming_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            address = str(Path(directory) / "wayland")
+            with (
+                socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener,
+                socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as original,
+            ):
+                listener.bind(address)
+                listener.listen(1)
+                original.connect(address)
+                accepted, _ = listener.accept()
+                self.addCleanup(accepted.close)
+                with patch.dict(os.environ, {"WAYLAND_SOCKET": str(original.fileno())}):
+                    clipboard.validate_watch_clipboard()
+                self.assertEqual(clipboard._USED_WAYLAND_SOCKETS, set())
+                self.assertTrue(stat.S_ISSOCK(os.fstat(original.fileno()).st_mode))
+        self.spawn.assert_not_called()
+
+    def test_watch_preflight_rejects_anonymous_but_one_shot_still_works(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        with patch.dict(os.environ, {"WAYLAND_SOCKET": str(left.fileno())}):
+            with self.assertRaisesRegex(
+                clipboard.ClipboardError, "WAYLAND_DISPLAY.*one-shot.*-o FILE"
+            ):
+                clipboard.validate_watch_clipboard()
+            self.assertEqual(clipboard._USED_WAYLAND_SOCKETS, set())
+            self.spawn.assert_not_called()
+            clipboard.copy_text("one shot")
+        self.spawn.assert_called_once()
+
+    def test_watch_preflight_skips_platforms_or_sessions_without_inherited_socket(self):
+        with (
+            patch.object(clipboard.sys, "platform", "darwin"),
+            patch.dict(os.environ, {"WAYLAND_SOCKET": "invalid"}),
+        ):
+            clipboard.validate_watch_clipboard()
+        clipboard.validate_watch_clipboard()
+        self.assertEqual(clipboard._USED_WAYLAND_SOCKETS, set())
+        self.spawn.assert_not_called()
+
+    def test_watch_preflight_rejects_invalid_socket_before_launch(self):
+        with (
+            tempfile.TemporaryFile() as regular,
+            patch.dict(os.environ, {"WAYLAND_SOCKET": str(regular.fileno())}),
+            self.assertRaisesRegex(
+                clipboard.ClipboardError, "descriptor is not a socket"
+            ),
+        ):
+            clipboard.validate_watch_clipboard()
+        with (
+            patch.dict(os.environ, {"WAYLAND_SOCKET": "invalid"}),
+            self.assertRaisesRegex(clipboard.ClipboardError, "open socket descriptor"),
+        ):
+            clipboard.validate_watch_clipboard()
+        self.assertEqual(clipboard._USED_WAYLAND_SOCKETS, set())
+        self.spawn.assert_not_called()
+
+    def test_failed_launch_does_not_consume_inherited_stream(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        self.spawn.side_effect = [
+            PermissionError("first launch rejected"),
+            self.process,
+        ]
+        with patch.dict(os.environ, {"WAYLAND_SOCKET": str(left.fileno())}):
+            with self.assertRaisesRegex(
+                clipboard.ClipboardError, "first launch rejected"
+            ):
+                clipboard.copy_text("first")
+            clipboard.copy_text("retry")
+        self.assertEqual(self.spawn.call_count, 2)
+        self.process.communicate.assert_called_once_with(input=b"retry", timeout=5)
+
+    def test_launched_failure_consumes_inherited_stream(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        self.process.returncode = 2
+        with (
+            patch.dict(os.environ, {"WAYLAND_SOCKET": str(left.fileno())}),
+            patch.object(clipboard.os, "killpg"),
+        ):
+            with self.assertRaisesRegex(
+                clipboard.ClipboardError, "exited with status 2"
+            ):
+                clipboard.copy_text("first")
+            with self.assertRaisesRegex(clipboard.ClipboardError, "reconnectable"):
+                clipboard.copy_text("retry")
+        self.spawn.assert_called_once()
+
     def test_anonymous_inherited_stream_is_never_reused(self):
         left, right = socket.socketpair()
         self.addCleanup(left.close)

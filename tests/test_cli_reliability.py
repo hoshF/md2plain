@@ -534,6 +534,46 @@ class WatchReliability(CliFixture):
         )
         copy.assert_not_called()
 
+    def test_watch_invalid_inherited_connection_fails_before_publishing(self):
+        target = self.root / "uncreated" / "letter.txt"
+        with (
+            patch.object(
+                cli,
+                "validate_watch_clipboard",
+                side_effect=cli.ClipboardError("Use WAYLAND_DISPLAY for watching"),
+            ),
+            patch.object(cli, "watch_input") as watch,
+        ):
+            result, out, err, copy = self.run_main(
+                self.source, "--watch", "-o", target, "--copy"
+            )
+        self.assertEqual(result, 1)
+        self.assertEqual(out, "")
+        self.assertIn("WAYLAND_DISPLAY", err)
+        self.assertNotIn("Traceback", err)
+        self.assertFalse(target.parent.exists())
+        copy.assert_not_called()
+        watch.assert_not_called()
+
+    def test_watch_without_copy_never_checks_clipboard(self):
+        for arguments in (("-o", self.output), ("--print",), ("--no-copy",)):
+            with (
+                self.subTest(arguments=arguments),
+                patch.object(
+                    cli,
+                    "validate_watch_clipboard",
+                    side_effect=AssertionError("clipboard must not be inspected"),
+                ),
+                patch.object(
+                    cli, "watch_input", side_effect=KeyboardInterrupt
+                ) as watch,
+            ):
+                result, _, err, copy = self.run_main(self.source, "--watch", *arguments)
+                self.assertEqual(result, 0)
+                self.assertIn("Stopped watching", err)
+                copy.assert_not_called()
+                watch.assert_called_once()
+
     def test_ctrl_c_is_clean(self):
         with patch.object(cli, "watch_input", side_effect=KeyboardInterrupt):
             result, out, err, copy = self.run_main(self.source, "--watch")

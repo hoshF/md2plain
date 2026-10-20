@@ -67,23 +67,56 @@ def _copy_macos(text: str) -> None:
         raise ClipboardError(f"Cannot copy to the macOS clipboard: {exc}") from exc
 
 
-def _wayland_socket() -> tuple[dict[str, str] | None, int | None]:
+def _duplicate_wayland_socket(value: str) -> tuple[int, tuple[int, int]]:
+    if not value.isascii() or not value.isdigit():
+        raise ValueError("expected an open socket descriptor")
+    original = int(value)
+    info = os.fstat(original)
+    if not stat.S_ISSOCK(info.st_mode):
+        raise ValueError("descriptor is not a socket")
+    # This import is POSIX-only; file/stdout output must still import on Windows.
+    import fcntl
+
+    descriptor = fcntl.fcntl(original, fcntl.F_DUPFD_CLOEXEC, 3)
+    return descriptor, (info.st_dev, info.st_ino)
+
+
+def validate_watch_clipboard() -> None:
+    """Reject an inherited one-use stream before starting clipboard watching."""
+    if not sys.platform.startswith("linux") or "WAYLAND_SOCKET" not in os.environ:
+        return
+    descriptor = None
+    try:
+        descriptor, _ = _duplicate_wayland_socket(os.environ["WAYLAND_SOCKET"])
+        connection = socket.socket(fileno=descriptor)
+        descriptor = None  # The socket object now owns the duplicate.
+        with connection:
+            if connection.family != socket.AF_UNIX or not connection.getpeername():
+                raise ValueError(
+                    "the inherited connection has no reconnectable endpoint"
+                )
+    except (OSError, ValueError, OverflowError) as exc:
+        raise ClipboardError(
+            f"Cannot watch using WAYLAND_SOCKET: {exc}. "
+            "Use WAYLAND_DISPLAY, a one-shot copy, "
+            "or --print / -o FILE without --copy."
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _wayland_socket() -> (
+    tuple[dict[str, str] | None, int | None, tuple[int, int] | None]
+):
     """Forward an inherited connection once; reconnect for later publications."""
     value = os.environ.get("WAYLAND_SOCKET")
     if value is None:
-        return None, None
+        return None, None, None
     try:
-        if not value.isascii() or not value.isdigit():
-            raise ValueError("expected an open socket descriptor")
-        original = int(value)
-        info = os.fstat(original)
-        if not stat.S_ISSOCK(info.st_mode):
-            raise ValueError("descriptor is not a socket")
-        # This import is POSIX-only; file/stdout output must still import on Windows.
+        descriptor, identity = _duplicate_wayland_socket(value)
         import fcntl
 
-        descriptor = fcntl.fcntl(original, fcntl.F_DUPFD_CLOEXEC, 3)
-        identity = (info.st_dev, info.st_ino)
         if identity in _USED_WAYLAND_SOCKETS:
             with socket.socket(fileno=descriptor) as previous:
                 address = previous.getpeername()
@@ -97,11 +130,10 @@ def _wayland_socket() -> tuple[dict[str, str] | None, int | None]:
                 connection.connect(address)
                 connection.settimeout(None)
                 descriptor = fcntl.fcntl(connection.fileno(), fcntl.F_DUPFD_CLOEXEC, 3)
-        _USED_WAYLAND_SOCKETS.add(identity)
     except (OSError, ValueError, OverflowError) as exc:
         raise ClipboardError(f"Invalid WAYLAND_SOCKET: {exc}. {_WAYLAND_HINT}") from exc
     environment = dict(os.environ, WAYLAND_SOCKET=str(descriptor))
-    return environment, descriptor
+    return environment, descriptor, identity
 
 
 def _stop_process_group(process: subprocess.Popen) -> None:
@@ -123,7 +155,7 @@ def _copy_wayland(text: str) -> None:
         data = text.encode("utf-8")
     except UnicodeError as exc:
         raise ClipboardError("Clipboard text must be valid UTF-8.") from exc
-    environment, descriptor = _wayland_socket()
+    environment, descriptor, identity = _wayland_socket()
     try:
         # wl-copy's background owner retains stderr. A PIPE here could make
         # communicate() wait for its EOF until a later clipboard replacement.
@@ -137,6 +169,10 @@ def _copy_wayland(text: str) -> None:
                 pass_fds=() if descriptor is None else (descriptor,),
                 start_new_session=True,
             )
+            if identity is not None:
+                # Only a started child may have consumed protocol messages.
+                # A launch failure leaves an inherited stream safe to retry.
+                _USED_WAYLAND_SOCKETS.add(identity)
             try:
                 process.communicate(input=data, timeout=COPY_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as exc:

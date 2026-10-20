@@ -80,8 +80,9 @@ session. If `wl-copy` is missing or the session is unavailable, the command
 reports the error; use `-o FILE` or `--print` when you only need the text.
 Wayland clipboard operations time out after five seconds if they cannot finish.
 An inherited `WAYLAND_SOCKET` is validated and forwarded. Repeated copies
-reconnect to the same socket endpoint; anonymous inherited connections support
-one copy only, so use `WAYLAND_DISPLAY` for watching in that environment.
+reconnect to the same socket endpoint. Anonymous inherited connections support
+one copy only; clipboard watch mode rejects them before publishing. Use a
+reconnectable `WAYLAND_DISPLAY` connection or file-only watching in that case.
 
 ## Install
 

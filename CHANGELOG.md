@@ -26,6 +26,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   too. `--print -o FILE` prints and saves without copying unless `--copy` is set.
 - Document macOS and Linux Wayland requirements, clipboard-free file/stdout
   usage, and that arbitrary output suffixes still contain UTF-8 plain text.
+- Limit source archives to project sources, tests, examples, and documentation,
+  excluding unrelated local draft letters and conversion results.
 - Prepare package version 0.2.0; no new Python dependencies are required.
 
 ## [0.1.1] - 2026-10-19

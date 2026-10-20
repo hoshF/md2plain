@@ -17,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import __version__
-from .clipboard import ClipboardError, copy_text
+from .clipboard import ClipboardError, copy_text, validate_watch_clipboard
 from .render import render_plain
 
 WATCH_POLL_SECONDS = 0.1
@@ -120,6 +120,11 @@ def save_output(text: str, args: argparse.Namespace) -> None:
                 pass
 
 
+def should_copy(args: argparse.Namespace) -> bool:
+    """Explicit choices override clipboard defaults for file and stdout output."""
+    return args.copy if args.copy is not None else not (args.output or args.show)
+
+
 def finish(text: str, args: argparse.Namespace) -> None:
     if args.output:
         save_output(text, args)
@@ -130,10 +135,7 @@ def finish(text: str, args: argparse.Namespace) -> None:
         except (OSError, UnicodeError) as exc:
             raise CliError(f"Cannot write stdout: {exc}") from exc
 
-    should_copy = args.copy
-    if should_copy is None:
-        should_copy = not (args.output or args.show)
-    if not should_copy:
+    if not should_copy(args):
         return
 
     try:
@@ -268,6 +270,11 @@ def main() -> int:
             raise CliError(f"Cannot expand file path: {exc}") from exc
         validate_output(args.input, args.output)
         if args.watch:
+            if should_copy(args):
+                try:
+                    validate_watch_clipboard()
+                except ClipboardError as exc:
+                    raise CliError(str(exc)) from exc
             try:
                 watch_input(args, convert)
             except KeyboardInterrupt:
