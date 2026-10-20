@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import __version__
+from .clipboard import ClipboardError, copy_text
 from .render import render_plain
 
 WATCH_POLL_SECONDS = 0.1
@@ -87,6 +88,7 @@ def save_output(text: str, args: argparse.Namespace) -> None:
     target = Path(args.output)
     temporary: Path | None = None
     try:
+        target.parent.mkdir(parents=True, exist_ok=True)
         try:
             mode = stat.S_IMODE(target.stat().st_mode)
         except FileNotFoundError:
@@ -118,24 +120,6 @@ def save_output(text: str, args: argparse.Namespace) -> None:
                 pass
 
 
-def copy_text(text: str) -> None:
-    """Write plain text and verify that the pasteboard accepted it."""
-    from AppKit import NSPasteboard, NSPasteboardTypeString
-
-    name = os.environ.get("MD2PLAIN_PASTEBOARD", "general")
-    board = (
-        NSPasteboard.generalPasteboard()
-        if name == "general"
-        else NSPasteboard.pasteboardWithName_(name)
-    )
-    if board is None:
-        raise CliError("Cannot access the clipboard.")
-    board.clearContents()
-    board.declareTypes_owner_([NSPasteboardTypeString], None)
-    if not board.setString_forType_(text, NSPasteboardTypeString):
-        raise CliError("The clipboard did not accept the plain text.")
-
-
 def finish(text: str, args: argparse.Namespace) -> None:
     if args.output:
         save_output(text, args)
@@ -145,19 +129,25 @@ def finish(text: str, args: argparse.Namespace) -> None:
             sys.stdout.flush()
         except (OSError, UnicodeError) as exc:
             raise CliError(f"Cannot write stdout: {exc}") from exc
-    if args.show or args.no_copy:
+
+    should_copy = args.copy
+    if should_copy is None:
+        should_copy = not (args.output or args.show)
+    if not should_copy:
         return
 
     try:
         copy_text(text)
-    except ImportError as exc:
-        raise CliError(
-            "pyobjc is not installed; use --print or --no-copy to skip the clipboard."
-        ) from exc
-    except CliError:
-        raise
+    except ClipboardError as exc:
+        message = str(exc)
+        if args.output:
+            message = f"Saved {args.output}, but clipboard copy failed: {message}"
+        raise CliError(message) from exc
     except Exception as exc:
-        raise CliError(f"Cannot copy to the clipboard: {exc}") from exc
+        message = f"Cannot copy to the clipboard: {exc}"
+        if args.output:
+            message = f"Saved {args.output}, but clipboard copy failed: {exc}"
+        raise CliError(message) from exc
 
     print(
         f"Copied {len(text.splitlines())} lines / {len(text)} chars of plain text. "
@@ -224,15 +214,30 @@ def main() -> int:
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("input", help="Markdown file, or - for stdin")
-    parser.add_argument("-o", "--output", help="also write the plain text to a file")
+    parser.add_argument(
+        "-o", "--output", help="save UTF-8 plain text to a file (without copying)"
+    )
     parser.add_argument(
         "--print",
         dest="show",
         action="store_true",
-        help="write to stdout without copying",
+        help="write to stdout (without copying unless --copy is set)",
     )
-    parser.add_argument(
-        "--no-copy", action="store_true", help="do not touch the clipboard"
+    clipboard = parser.add_mutually_exclusive_group()
+    clipboard.add_argument(
+        "--copy",
+        dest="copy",
+        action="store_const",
+        const=True,
+        default=None,
+        help="copy to the clipboard, including with --output or --print",
+    )
+    clipboard.add_argument(
+        "--no-copy",
+        dest="copy",
+        action="store_const",
+        const=False,
+        help="do not touch the clipboard",
     )
     parser.add_argument(
         "--watch", action="store_true", help="update after a stable save"
@@ -254,6 +259,13 @@ def main() -> int:
         finish(render_plain(source, args.width, not args.soft_breaks), args)
 
     try:
+        try:
+            if args.input != "-":
+                args.input = str(Path(args.input).expanduser())
+            if args.output:
+                args.output = str(Path(args.output).expanduser())
+        except (OSError, RuntimeError) as exc:
+            raise CliError(f"Cannot expand file path: {exc}") from exc
         validate_output(args.input, args.output)
         if args.watch:
             try:

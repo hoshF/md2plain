@@ -63,13 +63,15 @@ def r(md: str, width: int = 75, preserve: bool = True) -> str:
     return render_plain(md, width, preserve)
 
 
-def run_cli(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+def run_cli(
+    *args: str, stdin: str | None = None, cwd: Path = ROOT
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         CLI + list(args),
         input=stdin,
         text=True,
         capture_output=True,
-        cwd=ROOT,
+        cwd=cwd,
         check=False,
     )
 
@@ -253,9 +255,19 @@ class Cli(SampleCase):
 
     def test_output_file(self):
         out = Path(self.tmp.name) / "out.txt"
-        proc = run_cli(str(self.sample), "--no-copy", "-o", str(out))
+        proc = run_cli(str(self.sample), "-o", str(out))
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(out.read_text(encoding="utf-8"), render_plain(SAMPLE_MD))
+
+    def test_relative_input_and_output_paths(self):
+        proc = run_cli("sample.md", "-o", "new/信件.custom", cwd=Path(self.tmp.name))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(proc.stderr, "")
+        self.assertEqual(
+            (Path(self.tmp.name) / "new/信件.custom").read_text(encoding="utf-8"),
+            render_plain(SAMPLE_MD),
+        )
 
     def test_stdin(self):
         proc = run_cli("-", "--print", "--no-copy", stdin="# Hi\n")
@@ -319,7 +331,7 @@ class Cli(SampleCase):
 
     def test_output_path_with_spaces(self):
         out = Path(self.tmp.name) / "out file.txt"
-        proc = run_cli(str(self.sample), "--no-copy", "-o", str(out))
+        proc = run_cli(str(self.sample), "-o", str(out))
         self.assertEqual(proc.returncode, 0)
         self.assertTrue(out.exists())
 

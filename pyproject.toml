@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "md2plain"
 dynamic = ["version"]
-description = "Convert Markdown to plain-text email for Gmail's Plain text mode."
+description = "Convert Markdown letters to plain-text email."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -15,6 +15,7 @@ classifiers = [
   "Environment :: Console",
   "License :: OSI Approved :: MIT License",
   "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",

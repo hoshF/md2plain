@@ -7,10 +7,9 @@ import io
 import os
 import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from md2plain import cli
 
@@ -29,7 +28,7 @@ class CliFixture(unittest.TestCase):
             "input": str(self.source),
             "output": None,
             "show": False,
-            "no_copy": False,
+            "copy": None,
         }
         values.update(overrides)
         return argparse.Namespace(**values)
@@ -61,12 +60,114 @@ class CliReliability(CliFixture):
         self.assertEqual(self.output.read_text(), out)
         copy.assert_not_called()
 
-    def test_output_alone_still_copies(self):
-        result, out, err, copy = self.run_main(self.source, "-o", self.output)
+    def test_output_option_combinations(self):
+        for show in (False, True):
+            for save in (False, True):
+                for choice in (None, "--copy", "--no-copy"):
+                    with self.subTest(show=show, save=save, choice=choice):
+                        arguments = [str(self.source)]
+                        if show:
+                            arguments.append("--print")
+                        if save:
+                            arguments.extend(["-o", str(self.output)])
+                        if choice is not None:
+                            arguments.append(choice)
+                        result, out, err, copy = self.run_main(*arguments)
+                        expected = "Dear A,\nHello.\n"
+                        self.assertEqual(result, 0)
+                        self.assertEqual(out, expected if show else "")
+                        if save:
+                            self.assertEqual(self.output.read_text(), expected)
+                        should_copy = choice == "--copy" or (
+                            choice is None and not (show or save)
+                        )
+                        if should_copy:
+                            copy.assert_called_once_with(expected)
+                            self.assertIn("Copied", err)
+                        else:
+                            copy.assert_not_called()
+                            self.assertEqual(err, "")
+
+    def test_conflicting_clipboard_flags_are_rejected(self):
+        stderr = io.StringIO()
+        with (
+            patch.object(
+                sys, "argv", ["md2plain", str(self.source), "--copy", "--no-copy"]
+            ),
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as error,
+            patch.object(cli, "copy_text") as copy,
+        ):
+            cli.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("not allowed with argument", stderr.getvalue())
+        copy.assert_not_called()
+
+    def test_output_creates_parents_and_supports_unicode_and_any_extension(self):
+        target = self.root / "信件 草稿" / "nested" / "letter.custom"
+        result, out, err, copy = self.run_main(self.source, "-o", target)
         self.assertEqual(result, 0)
+        self.assertEqual(target.read_text(encoding="utf-8"), "Dear A,\nHello.\n")
+        self.assertEqual((out, err), ("", ""))
+        copy.assert_not_called()
+
+    def test_quoted_tilde_paths_are_expanded(self):
+        target = self.root / "Documents" / "信件.txt"
+        with patch.dict(os.environ, {"HOME": str(self.root)}):
+            result, out, err, copy = self.run_main(
+                "~/letter.md", "-o", "~/Documents/信件.txt"
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(target.read_text(encoding="utf-8"), "Dear A,\nHello.\n")
+        self.assertEqual((out, err), ("", ""))
+        copy.assert_not_called()
+
+    def test_expanded_alias_is_rejected(self):
+        with patch.dict(os.environ, {"HOME": str(self.root)}):
+            result, out, err, copy = self.run_main(self.source, "-o", "~/letter.md")
+        self.assertEqual(result, 1)
         self.assertEqual(out, "")
-        copy.assert_called_once_with(self.output.read_text())
-        self.assertIn("Copied", err)
+        self.assertIn("different files", err)
+        copy.assert_not_called()
+
+    def test_failed_input_never_creates_output_directory(self):
+        target = self.root / "uncreated" / "result.txt"
+        cases = [
+            (self.root / "missing.md", None),
+            (self.source, b"\xff"),
+            (self.source, b""),
+        ]
+        for input_path, content in cases:
+            with self.subTest(input_path=input_path, content=content):
+                if content is not None:
+                    self.source.write_bytes(content)
+                result, out, _, copy = self.run_main(input_path, "-o", target)
+                self.assertEqual(result, 1)
+                self.assertEqual(out, "")
+                self.assertFalse(target.parent.exists())
+                copy.assert_not_called()
+
+    def test_failed_conversion_never_creates_output_directory(self):
+        target = self.root / "uncreated" / "result.txt"
+        with patch.object(
+            cli, "render_plain", side_effect=cli.CliError("conversion failed")
+        ):
+            result, out, err, copy = self.run_main(self.source, "-o", target)
+        self.assertEqual(result, 1)
+        self.assertEqual(out, "")
+        self.assertIn("conversion failed", err)
+        self.assertFalse(target.parent.exists())
+        copy.assert_not_called()
+
+    def test_stdin_can_save_into_new_directory(self):
+        target = self.root / "new" / "letter.txt"
+        result, out, _, copy = self.run_main(
+            "-", "-o", target, stdin=io.StringIO("# Hello\n")
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(target.read_text(), "Hello\n=====\n")
+        self.assertEqual(out, "")
+        copy.assert_not_called()
 
     def test_file_and_stdin_bom_and_newlines(self):
         raw = b"\xef\xbb\xbfHello\r\nA\rB\n"
@@ -161,21 +262,24 @@ class CliReliability(CliFixture):
         self.assertEqual(list(self.root.glob(".md2plain-*")), [])
 
     def test_output_failure_has_no_traceback_or_clipboard_change(self):
+        blocked_parent = self.root / "not-a-directory"
+        blocked_parent.write_text("occupied", encoding="utf-8")
         result, out, err, copy = self.run_main(
-            self.source, "-o", self.root / "missing" / "out.txt"
+            self.source, "-o", blocked_parent / "out.txt", "--copy"
         )
         self.assertEqual(result, 1)
         self.assertEqual(out, "")
-        self.assertIn("Cannot write", err)
+        self.assertIn(str(blocked_parent / "out.txt"), err)
+        self.assertIn("Not a directory", err)
         self.assertNotIn("Traceback", err)
         copy.assert_not_called()
 
     def test_clipboard_failure_never_reports_success(self):
         stderr = io.StringIO()
         for error in (
-            cli.CliError("rejected"),
+            cli.ClipboardError("rejected"),
             RuntimeError("unavailable"),
-            ImportError(),
+            ImportError("missing backend"),
         ):
             with (
                 self.subTest(error=error),
@@ -186,35 +290,56 @@ class CliReliability(CliFixture):
                 cli.finish("hello\n", self.args())
         self.assertNotIn("Copied", stderr.getvalue())
 
-    def test_clipboard_board_and_acceptance_are_checked(self):
-        pasteboard = Mock()
-        module = types.SimpleNamespace(
-            NSPasteboard=pasteboard, NSPasteboardTypeString="public.utf8-plain-text"
-        )
-        with (
-            patch.dict(sys.modules, {"AppKit": module}),
-            patch.dict(os.environ, {"MD2PLAIN_PASTEBOARD": "md2plain-unit-test"}),
+    def test_parent_permission_failure_is_reported_before_copy(self):
+        with patch.object(
+            Path, "mkdir", side_effect=PermissionError("permission denied")
         ):
-            pasteboard.pasteboardWithName_.return_value = None
-            with self.assertRaisesRegex(cli.CliError, "access the clipboard"):
-                cli.copy_text("hello")
-            board = Mock()
-            pasteboard.pasteboardWithName_.return_value = board
-            board.setString_forType_.return_value = False
-            with self.assertRaisesRegex(cli.CliError, "did not accept"):
-                cli.copy_text("hello")
-            board.setString_forType_.return_value = True
-            cli.copy_text("hello")
-            board.setString_forType_.assert_called_with(
-                "hello", "public.utf8-plain-text"
+            result, out, err, copy = self.run_main(
+                self.source, "-o", self.root / "protected" / "out.txt", "--copy"
             )
-            pasteboard.generalPasteboard.assert_not_called()
+        self.assertEqual(result, 1)
+        self.assertEqual(out, "")
+        self.assertIn("Cannot write", err)
+        self.assertIn("permission denied", err)
+        self.assertFalse((self.root / "protected").exists())
+        copy.assert_not_called()
+
+    def test_saved_file_is_retained_and_named_when_copy_fails(self):
+        stderr = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["md2plain", str(self.source), "-o", str(self.output), "--copy"],
+            ),
+            patch.object(sys, "stderr", stderr),
+            patch.object(
+                cli, "copy_text", side_effect=cli.ClipboardError("Wayland unavailable")
+            ),
+        ):
+            result = cli.main()
+        self.assertEqual(result, 1)
+        self.assertEqual(self.output.read_text(), "Dear A,\nHello.\n")
+        self.assertIn(f"Saved {self.output}", stderr.getvalue())
+        self.assertIn("clipboard copy failed", stderr.getvalue())
+        self.assertIn("Wayland unavailable", stderr.getvalue())
+        self.assertNotIn("Copied", stderr.getvalue())
+
+    def test_unknown_home_user_is_an_actionable_error(self):
+        with patch.object(
+            Path, "expanduser", side_effect=RuntimeError("home unavailable")
+        ):
+            result, out, err, copy = self.run_main(self.source, "-o", self.output)
+        self.assertEqual(result, 1)
+        self.assertEqual(out, "")
+        self.assertIn("Cannot expand file path", err)
+        copy.assert_not_called()
 
 
 class WatchReliability(CliFixture):
     """Use real file changes and a virtual clock, without touching the clipboard."""
 
-    def run_watch(self, events=(), until=2.0, convert=None):
+    def run_watch(self, events=(), until=2.0, convert=None, args=None):
         now = 0.0
         remaining = list(events)
         published = []
@@ -240,7 +365,7 @@ class WatchReliability(CliFixture):
             patch.object(sys, "stderr", stderr),
             self.assertRaises(KeyboardInterrupt),
         ):
-            cli.watch_input(self.args(), publish)
+            cli.watch_input(args or self.args(), publish)
         return published, stderr.getvalue()
 
     def write(self, content):
@@ -358,6 +483,56 @@ class WatchReliability(CliFixture):
         with patch.object(cli, "read_input", side_effect=changing_read):
             published, _ = self.run_watch(until=1.0)
         self.assertEqual([text for _, text in published], ["New content\n"])
+
+    def test_watch_file_output_does_not_copy_by_default(self):
+        args = self.args(output=str(self.root / "new" / "letter.txt"))
+        with patch.object(cli, "copy_text") as copy:
+            published, _ = self.run_watch(
+                [(0.7, lambda: self.write("Updated\n"))],
+                until=1.5,
+                convert=lambda text: cli.finish(cli.render_plain(text), args),
+                args=args,
+            )
+        self.assertEqual(
+            [text for _, text in published], ["Dear A,\nHello.\n", "Updated\n"]
+        )
+        self.assertEqual(Path(args.output).read_text(), "Updated\n")
+        copy.assert_not_called()
+
+    def test_watch_file_output_can_explicitly_copy(self):
+        args = self.args(output=str(self.output), copy=True)
+        with patch.object(cli, "copy_text") as copy:
+            published, _ = self.run_watch(
+                until=0.8,
+                convert=lambda text: cli.finish(cli.render_plain(text), args),
+                args=args,
+            )
+        self.assertEqual(len(published), 1)
+        copy.assert_called_once_with(self.output.read_text())
+
+    def test_watch_uses_expanded_input_and_output_paths(self):
+        observed = []
+
+        def watch(args, convert):
+            observed.extend([args.input, args.output])
+            convert(cli.read_input(args.input))
+            raise KeyboardInterrupt
+
+        with (
+            patch.dict(os.environ, {"HOME": str(self.root)}),
+            patch.object(cli, "watch_input", side_effect=watch),
+        ):
+            result, _, _, copy = self.run_main(
+                "~/letter.md", "-o", "~/nested/letter.txt", "--watch"
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            observed, [str(self.source), str(self.root / "nested/letter.txt")]
+        )
+        self.assertEqual(
+            (self.root / "nested/letter.txt").read_text(), "Dear A,\nHello.\n"
+        )
+        copy.assert_not_called()
 
     def test_ctrl_c_is_clean(self):
         with patch.object(cli, "watch_input", side_effect=KeyboardInterrupt):

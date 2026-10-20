@@ -4,14 +4,14 @@
 [![PyPI](https://img.shields.io/pypi/v/md2plain.svg)](https://pypi.org/project/md2plain/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](pyproject.toml)
+[![Platform: macOS · Linux Wayland](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20Wayland-lightgrey)](pyproject.toml)
 
 **Markdown in, plain-text email out.**
 
 `md2plain` turns a Markdown letter into a plain-text email body, then copies
-it to the macOS clipboard or writes it to a file or stdout. It preserves
-complete link targets, code whitespace, and email signature separators while
-wrapping ordinary text to a target of 75 display columns.
+it to the macOS or Linux Wayland clipboard, or writes it to a file or stdout.
+It preserves complete link targets, code whitespace, and email signature
+separators while wrapping ordinary text to a target of 75 display columns.
 
 Paste the result into your mail client's plain-text compose mode. The tool
 produces the body text; your mail client controls the final MIME format,
@@ -61,15 +61,39 @@ with [RFC 5322's line-length rules](https://www.rfc-editor.org/rfc/rfc5322#secti
 
 ## Requirements
 
-- macOS (the clipboard is written through AppKit)
-- Python 3.10 or newer
+- Python 3.10 or newer.
+- For clipboard output: macOS with AppKit, or Linux running a Wayland session
+  with the system `wl-clipboard` package installed.
 
-Rendering to stdout or a file with copying disabled also works without the
-macOS clipboard backend.
+File and stdout output work without a clipboard backend, including on a
+headless system. Clipboard output on X11 and Windows is not supported.
+
+On Debian or Ubuntu, install the Wayland clipboard tools with:
+
+```bash
+sudo apt install wl-clipboard
+```
+
+On other Linux distributions, install `wl-clipboard` with your system package
+manager. Run `md2plain` from an environment that can connect to your Wayland
+session. If `wl-copy` is missing or the session is unavailable, the command
+reports the error; use `-o FILE` or `--print` when you only need the text.
+Wayland clipboard operations time out after five seconds if they cannot finish.
+An inherited `WAYLAND_SOCKET` is validated and forwarded. Repeated copies
+reconnect to the same socket endpoint; anonymous inherited connections support
+one copy only, so use `WAYLAND_DISPLAY` for watching in that environment.
 
 ## Install
 
-With [pipx](https://pipx.pypa.io/):
+With [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install md2plain
+```
+
+Update an existing uv installation with `uv tool upgrade md2plain`.
+
+Or with [pipx](https://pipx.pypa.io/):
 
 ```bash
 pipx install md2plain
@@ -114,11 +138,14 @@ Other output combinations:
 # Print without changing the clipboard.
 md2plain note.md --print
 
-# Save and copy to the clipboard.
-md2plain note.md -o note.txt
+# Save without changing the clipboard; missing parent directories are created.
+md2plain note.md -o ~/Documents/letters/note.txt
 
-# Save without changing the clipboard.
-md2plain note.md -o note.txt --no-copy
+# Save and copy to the clipboard.
+md2plain note.md -o note.txt --copy
+
+# Explicitly request copying even when printing.
+md2plain note.md --print --copy
 
 # Print and save without changing the clipboard.
 md2plain note.md --print -o note.txt
@@ -126,9 +153,15 @@ md2plain note.md --print -o note.txt
 # Read Markdown from stdin; a UTF-8 BOM is accepted here too.
 cat note.md | md2plain - --print
 
-# Refresh the selected outputs after stable file changes.
+# Refresh the clipboard after stable file changes.
 md2plain note.md --watch
+
+# Refresh only the file; add --copy to update the clipboard too.
+md2plain note.md --watch -o ~/Documents/letters/note.txt
 ```
+
+**Upgrading from 0.1.x:** `-o FILE` now saves only to the file. To keep the
+previous save-and-copy behavior, use `-o FILE --copy`.
 
 See [examples/email.md](examples/email.md) and its rendered
 [plain-text result](examples/email.txt) for a bilingual letter with links,
@@ -140,22 +173,41 @@ quotes, code, and signatures.
 |---|---|
 | `--width N` | Target display width (default: 75; minimum: 1) |
 | `--watch` | Refresh selected outputs after a file change stays stable for 0.5 seconds; requires a file |
-| `--print` | Write to stdout and disable clipboard copying |
-| `-o, --output FILE` | Also save to a UTF-8 text file; copying remains enabled unless disabled |
-| `--no-copy` | Disable clipboard copying; use with `--print` or `-o` |
+| `--print` | Write to stdout; do not copy unless `--copy` is specified |
+| `-o, --output FILE` | Save UTF-8 text to this path; do not copy unless `--copy` is specified |
+| `--copy` | Explicitly enable clipboard copying, including with `--print` or `-o` |
+| `--no-copy` | Explicitly disable clipboard copying; mutually exclusive with `--copy` |
 | `--soft-breaks` | Join ordinary paragraph soft newlines with spaces; code and signature separators stay intact |
 | `--version` | Print the version and exit |
+
+With no output option, the command copies to the clipboard. With `--print`
+or `-o`, it uses only those selected outputs unless `--copy` is also given.
+`--print -o FILE` both prints and saves without copying. `--no-copy` remains
+available for explicitly disabling copying; use it with `--print` or `-o`.
+
+Input and output paths accept standard `~` home-directory expansion, including
+quoted paths such as `-o "~/Documents/My letters/note.txt"`. Absolute and
+relative paths, spaces, and non-ASCII names are supported. Missing output
+parent directories are created after the input has been read and converted
+successfully. Any file suffix is accepted, but the content is always UTF-8
+plain text: naming it `.pdf` or `.docx` does not convert it to that format.
 
 Input must be valid UTF-8, with or without a BOM. Invalid encoding is an
 error; it is never silently replaced with different characters. Failed
 input does not change the output file or clipboard. Output cannot refer to
 the input file, including through a symbolic or hard link. Files are saved
-using an atomic replacement to avoid leaving a partially written result.
+using an atomic replacement to avoid leaving a partially written result;
+existing file permissions are preserved. If a file is saved but an explicitly
+requested clipboard copy fails, the file remains saved. A one-shot command
+reports the clipboard failure with a nonzero exit status.
 
 Watch mode waits for a change to remain stable for 0.5 seconds before
 converting it. Temporary empty files, unreadable files, and decoding errors
 keep the last successful result; watching continues when the file is saved
-again or recreated. Clipboard failures are reported as errors.
+again or recreated. Clipboard failures are reported as errors. With
+`--watch -o FILE`, only the file is updated unless `--copy` is specified.
+On Wayland, clipboard text remains available for repeated pastes after the
+command finishes, including after exiting watch mode.
 
 ## Output format
 
@@ -201,7 +253,8 @@ monospaced text; actual rendering varies with fonts and mail clients.
 
 ## Limitations
 
-- Clipboard copying requires macOS and AppKit.
+- Clipboard copying requires macOS and AppKit, or Linux Wayland with
+  `wl-clipboard`; X11 and Windows clipboard backends are not included.
 - Bold and italic styling is removed. Link destinations remain text; the
   mail client decides whether to make them clickable.
 - Images are references, not attachments. YAML front matter, footnotes,
@@ -220,6 +273,17 @@ python3 -m venv .venv
 .venv/bin/ruff check src tests
 .venv/bin/black --check src tests
 ```
+
+The Wayland integration suite is opt-in and skipped during normal test runs.
+On Linux with `sway`, `swaymsg`, and `wl-clipboard` installed, run:
+
+```bash
+MD2PLAIN_WAYLAND_TEST=1 .venv/bin/python -m unittest discover -s tests -p test_wayland_integration.py -v
+```
+
+These tests start a private headless Sway session with an isolated runtime
+directory and do not use your desktop clipboard. A separate Ubuntu CI job
+runs them to check UTF-8 fidelity, repeated pastes, and watch-mode persistence.
 
 The `./md2plain` script in the repository root is a development launcher; it
 runs the package from `.venv`. Installed users get the `md2plain` command from
@@ -243,13 +307,14 @@ One-time setup on PyPI: open the `md2plain` project, go to
 
 To cut a release:
 
-1. Bump `__version__` in `src/md2plain/__init__.py`.
-2. Add an entry to [CHANGELOG.md](CHANGELOG.md).
+1. Confirm `__version__` in `src/md2plain/__init__.py` is the intended version.
+2. Finalize its [CHANGELOG.md](CHANGELOG.md) entry and replace `Unreleased` with
+   the release date.
 3. Commit, tag, and push:
 
 ```bash
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The `Release` workflow then checks that the tag matches the package version,
