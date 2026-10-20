@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import __version__
+from .clipboard import ClipboardError, copy_text, validate_watch_clipboard
 from .render import render_plain
 
 WATCH_POLL_SECONDS = 0.1
@@ -63,6 +64,25 @@ def read_input(path: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def output_path_for(input_path: str, output_path: str) -> str:
+    """Resolve a directory destination without creating it or changing file paths."""
+    target = Path(output_path).expanduser()
+    directory_hint = output_path.endswith(os.sep) or (
+        os.altsep is not None and output_path.endswith(os.altsep)
+    )
+    if directory_hint or target.is_dir():
+        if input_path == "-":
+            raise CliError(
+                "Directory output requires an input filename; "
+                "when reading stdin, specify an output filename with -o FILE."
+            )
+        name = Path(input_path).name
+        if not name or name in (".", ".."):
+            raise CliError("Cannot infer an output filename from the input path.")
+        target = target / Path(name).with_suffix(".txt")
+    return str(target)
+
+
 def validate_output(input_path: str, output_path: str | None) -> None:
     """Protect the source even when either path is a link or changes in watch."""
     if input_path == "-" or not output_path:
@@ -87,6 +107,7 @@ def save_output(text: str, args: argparse.Namespace) -> None:
     target = Path(args.output)
     temporary: Path | None = None
     try:
+        target.parent.mkdir(parents=True, exist_ok=True)
         try:
             mode = stat.S_IMODE(target.stat().st_mode)
         except FileNotFoundError:
@@ -118,22 +139,9 @@ def save_output(text: str, args: argparse.Namespace) -> None:
                 pass
 
 
-def copy_text(text: str) -> None:
-    """Write plain text and verify that the pasteboard accepted it."""
-    from AppKit import NSPasteboard, NSPasteboardTypeString
-
-    name = os.environ.get("MD2PLAIN_PASTEBOARD", "general")
-    board = (
-        NSPasteboard.generalPasteboard()
-        if name == "general"
-        else NSPasteboard.pasteboardWithName_(name)
-    )
-    if board is None:
-        raise CliError("Cannot access the clipboard.")
-    board.clearContents()
-    board.declareTypes_owner_([NSPasteboardTypeString], None)
-    if not board.setString_forType_(text, NSPasteboardTypeString):
-        raise CliError("The clipboard did not accept the plain text.")
+def should_copy(args: argparse.Namespace) -> bool:
+    """Explicit choices override clipboard defaults for file and stdout output."""
+    return args.copy if args.copy is not None else not (args.output or args.show)
 
 
 def finish(text: str, args: argparse.Namespace) -> None:
@@ -145,19 +153,22 @@ def finish(text: str, args: argparse.Namespace) -> None:
             sys.stdout.flush()
         except (OSError, UnicodeError) as exc:
             raise CliError(f"Cannot write stdout: {exc}") from exc
-    if args.show or args.no_copy:
+
+    if not should_copy(args):
         return
 
     try:
         copy_text(text)
-    except ImportError as exc:
-        raise CliError(
-            "pyobjc is not installed; use --print or --no-copy to skip the clipboard."
-        ) from exc
-    except CliError:
-        raise
+    except ClipboardError as exc:
+        message = str(exc)
+        if args.output:
+            message = f"Saved {args.output}, but clipboard copy failed: {message}"
+        raise CliError(message) from exc
     except Exception as exc:
-        raise CliError(f"Cannot copy to the clipboard: {exc}") from exc
+        message = f"Cannot copy to the clipboard: {exc}"
+        if args.output:
+            message = f"Saved {args.output}, but clipboard copy failed: {exc}"
+        raise CliError(message) from exc
 
     print(
         f"Copied {len(text.splitlines())} lines / {len(text)} chars of plain text. "
@@ -218,21 +229,39 @@ def watch_input(args: argparse.Namespace, convert: Callable[[str], None]) -> Non
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="md2plain",
-        description="Convert Markdown to plain-text email and copy it to the clipboard.",
+        description="Convert Markdown letters to plain-text email bodies.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("input", help="Markdown file, or - for stdin")
-    parser.add_argument("-o", "--output", help="also write the plain text to a file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="FILE_OR_DIR",
+        help="save UTF-8 text to a file or directory (without copying)",
+    )
     parser.add_argument(
         "--print",
         dest="show",
         action="store_true",
-        help="write to stdout without copying",
+        help="write to stdout (without copying unless --copy is set)",
     )
-    parser.add_argument(
-        "--no-copy", action="store_true", help="do not touch the clipboard"
+    clipboard = parser.add_mutually_exclusive_group()
+    clipboard.add_argument(
+        "--copy",
+        dest="copy",
+        action="store_const",
+        const=True,
+        default=None,
+        help="copy to the clipboard, including with --output or --print",
+    )
+    clipboard.add_argument(
+        "--no-copy",
+        dest="copy",
+        action="store_const",
+        const=False,
+        help="do not touch the clipboard",
     )
     parser.add_argument(
         "--watch", action="store_true", help="update after a stable save"
@@ -254,8 +283,20 @@ def main() -> int:
         finish(render_plain(source, args.width, not args.soft_breaks), args)
 
     try:
+        try:
+            if args.input != "-":
+                args.input = str(Path(args.input).expanduser())
+            if args.output:
+                args.output = output_path_for(args.input, args.output)
+        except (OSError, RuntimeError) as exc:
+            raise CliError(f"Cannot expand file path: {exc}") from exc
         validate_output(args.input, args.output)
         if args.watch:
+            if should_copy(args):
+                try:
+                    validate_watch_clipboard()
+                except ClipboardError as exc:
+                    raise CliError(str(exc)) from exc
             try:
                 watch_input(args, convert)
             except KeyboardInterrupt:

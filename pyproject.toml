@@ -5,16 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "md2plain"
 dynamic = ["version"]
-description = "Convert Markdown to plain-text email for Gmail's Plain text mode."
+description = "Convert Markdown letters to plain-text email bodies."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "hoshF", email = "noveor.ol@gmail.com" }]
-keywords = ["markdown", "plain-text", "email", "gmail", "cli"]
+keywords = ["markdown", "plain-text", "email", "clipboard", "cli", "wayland"]
 classifiers = [
   "Environment :: Console",
   "License :: OSI Approved :: MIT License",
   "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -41,6 +42,20 @@ Issues = "https://github.com/hoshF/md2plain/issues"
 
 [tool.hatch.version]
 path = "src/md2plain/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/examples",
+  "/.github",
+  "/.gitignore",
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/README.md",
+  "/md2plain",
+  "/pyproject.toml",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/md2plain"]

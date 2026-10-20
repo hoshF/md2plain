@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - Unreleased
+
+### Added
+
+- Linux Wayland clipboard via `wl-clipboard`, with a five-second timeout and
+  background ownership for repeated pastes after command or watch exit.
+- `--copy` to enable clipboard output explicitly; conflicts with `--no-copy`.
+- `~` expansion and automatic creation of output directories.
+- Directory output derives `name.txt` from the input filename. New directories
+  require a trailing `/`; stdin requires an explicit output filename.
+- Isolated headless Sway integration tests in a separate Ubuntu CI job.
+
+### Changed
+
+- `-o` now saves without copying, including in watch mode. Use `-o PATH --copy`
+  to retain 0.1.x behavior; `--print` also accepts `--copy`.
+- Source archives include only project sources, tests, examples, and
+  documentation; local drafts and conversion results are excluded.
+
 ## [0.1.1] - 2026-10-19
 
 ### Changed

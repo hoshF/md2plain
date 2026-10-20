@@ -3,217 +3,96 @@
 [![CI](https://github.com/hoshF/md2plain/actions/workflows/ci.yml/badge.svg)](https://github.com/hoshF/md2plain/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/md2plain.svg)](https://pypi.org/project/md2plain/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](pyproject.toml)
 
-**Markdown in, plain-text email out.**
-
-`md2plain` turns a Markdown letter into a plain-text email body, then copies
-it to the macOS clipboard or writes it to a file or stdout. It preserves
-complete link targets, code whitespace, and email signature separators while
-wrapping ordinary text to a target of 75 display columns.
-
-Paste the result into your mail client's plain-text compose mode. The tool
-produces the body text; your mail client controls the final MIME format,
-encoding, and display.
-
-## Demo
-
-Input:
-
-```markdown
-# Quarterly Update
-
-This is a **short** note with a [link](https://example.com).
-
-* one
-* two
-
-> quoted
-```
-
-Output:
-
-```text
-Quarterly Update
-================
-
-This is a short note with a link (https://example.com).
-
-* one
-* two
-
-> quoted
-```
-
-## Why
-
-- Write letters in Markdown without carrying rich-text styling into email.
-- Keep the destination of every link, including its query and fragment.
-- Keep greetings, addresses, and signatures on their own lines by default.
-- Produce readable text with a consistent wrapping target. Complete URLs,
-  email addresses, inline code, and code blocks may exceed that target to
-  preserve their content.
-
-The 75-column setting measures display width, not the character count or
-encoded line length of a complete email. It does not guarantee compliance
-with [RFC 5322's line-length rules](https://www.rfc-editor.org/rfc/rfc5322#section-2.1.1).
-
-## Requirements
-
-- macOS (the clipboard is written through AppKit)
-- Python 3.10 or newer
-
-Rendering to stdout or a file with copying disabled also works without the
-macOS clipboard backend.
+Convert Markdown letters to plain-text email bodies.
+Copy to the macOS or Linux Wayland clipboard, save a UTF-8 file, or write to stdout.
 
 ## Install
 
-With [pipx](https://pipx.pypa.io/):
+Python 3.10+.
 
-```bash
-pipx install md2plain
+```sh
+uv tool install md2plain
+uv tool upgrade md2plain
 ```
 
-Or with pip:
+Linux clipboard support requires `wl-clipboard` and a working Wayland session.
+On Debian/Ubuntu:
 
-```bash
-pip install md2plain
+```sh
+sudo apt install wl-clipboard
 ```
 
-For development, install from a checkout:
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-```
+File and stdout output need no clipboard backend. X11 and Windows clipboard
+backends are not supported.
 
 ## Usage
 
-```bash
-md2plain note.md
+```sh
+md2plain letter.md                           # copy
+md2plain letter.md --print                   # stdout
+md2plain letter.md -o letter.txt             # save
+md2plain letter.md -o ~/Documents/letters/   # save as letter.txt
+md2plain letter.md -o letter.txt --copy      # save and copy
+md2plain letter.md --watch -o letter.txt     # update file on save
+cat letter.md | md2plain - --print           # stdin
 ```
 
-In Gmail, enable **Plain text mode** in the compose window before pasting.
-Other clients have their own plain-text compose setting. A plain-text
-clipboard does not force the client to send a plain-text-only message.
+`-o` and `--print` disable default copying. Add `--copy` to copy as well.
+`--print -o FILE` prints and saves.
 
-To inspect a message you have sent, view its original source and check its
-MIME content types. A plain-text body is identified by a header such as:
-
-```text
-Content-Type: text/plain; charset="UTF-8"
-```
-
-HTML alternatives, attachments, and other MIME structure depend on the mail
-client. Display wrapping and quote collapsing also depend on the client.
-
-Other output combinations:
-
-```bash
-# Print without changing the clipboard.
-md2plain note.md --print
-
-# Save and copy to the clipboard.
-md2plain note.md -o note.txt
-
-# Save without changing the clipboard.
-md2plain note.md -o note.txt --no-copy
-
-# Print and save without changing the clipboard.
-md2plain note.md --print -o note.txt
-
-# Read Markdown from stdin; a UTF-8 BOM is accepted here too.
-cat note.md | md2plain - --print
-
-# Refresh the selected outputs after stable file changes.
-md2plain note.md --watch
-```
-
-See [examples/email.md](examples/email.md) and its rendered
-[plain-text result](examples/email.txt) for a bilingual letter with links,
-quotes, code, and signatures.
+**0.2.0:** replace the old save-and-copy usage with `-o FILE --copy`.
 
 ## Options
 
 | Option | Description |
 |---|---|
-| `--width N` | Target display width (default: 75; minimum: 1) |
-| `--watch` | Refresh selected outputs after a file change stays stable for 0.5 seconds; requires a file |
-| `--print` | Write to stdout and disable clipboard copying |
-| `-o, --output FILE` | Also save to a UTF-8 text file; copying remains enabled unless disabled |
-| `--no-copy` | Disable clipboard copying; use with `--print` or `-o` |
-| `--soft-breaks` | Join ordinary paragraph soft newlines with spaces; code and signature separators stay intact |
-| `--version` | Print the version and exit |
+| `-o, --output FILE_OR_DIR` | Save to a file or directory |
+| `--print` | Write to stdout |
+| `--copy` | Enable copying with other outputs |
+| `--no-copy` | Disable copying; mutually exclusive with `--copy` |
+| `--watch` | Update after the input stays stable for 0.5 seconds |
+| `--width N` | Target display width; default 75, minimum 1 |
+| `--soft-breaks` | Join paragraph soft line breaks |
+| `--version` | Show version |
 
-Input must be valid UTF-8, with or without a BOM. Invalid encoding is an
-error; it is never silently replaced with different characters. Failed
-input does not change the output file or clipboard. Output cannot refer to
-the input file, including through a symbolic or hard link. Files are saved
-using an atomic replacement to avoid leaving a partially written result.
+## Files
 
-Watch mode waits for a change to remain stable for 0.5 seconds before
-converting it. Temporary empty files, unreadable files, and decoding errors
-keep the last successful result; watching continues when the file is saved
-again or recreated. Clipboard failures are reported as errors.
+- Input and output use UTF-8; an input BOM is accepted. Paths support `~`.
+- Existing output directories produce `INPUT_STEM.txt`. New directories require
+  a trailing `/`; otherwise a nonexistent path is a filename.
+- Missing parent directories are created after successful conversion.
+  `letter.draft.md` becomes `letter.draft.txt`. For stdin, `-o` requires a filename.
+- Any suffix is accepted; output remains plain text.
+- Saves are atomic and preserve existing permissions. Input/output aliases are
+  rejected. A copy failure leaves the saved file intact and reports an error.
 
-## Output format
+## Rendering
 
-| Markdown | Output |
-|---|---|
-| `# Heading` | heading + `====` underline |
-| `## Heading` | heading + `----` underline |
-| `### Heading` | heading + `~~~~` underline |
-| Paragraph | wrapped to a target of 75 display columns |
-| `- item` | `* item`, with hanging indent |
-| `1. item` | `1. item` |
-| `> quote` | `> quote` |
-| Code block | indented by four spaces; parser-provided whitespace and line breaks kept; no wrapping |
-| Inline code | parser-provided spaces kept; not split across lines |
-| `[text](url)` | `text (url)`; full target retained in every context |
-| `~~deleted~~` | `~~deleted~~` |
-| `![alt](src)` | `[图片：alt] (src)`; empty alt uses `[图片] (src)` |
-| Table | naturally aligned columns when they fit; otherwise one `header: value` line per column, with a blank line between records |
-| Single newline | kept (signatures and dates stay on their own lines) |
-| Exact `-- ` signature separator | kept, including the trailing space and inside blockquotes |
+- Wrap ordinary text at 75 display columns by default; URLs, email addresses,
+  and code may exceed the target.
+- Preserve link targets, code whitespace, `~~strikethrough~~`, and exact `-- `
+  signature separators. Keep source line breaks unless `--soft-breaks` is set.
+- Keep aligned tables that fit; render wider tables as `header: value` records.
+  Images become text references to their source.
 
-Links keep their full query strings, fragments, and relative paths. The
-repeated target is omitted only when identical to the label. URLs and email
-addresses move to the next line as a whole when needed; they may exceed the width.
-Image references retain their source but do not attach or embed the image.
-Tables containing tabs also use field records, preserving the tab characters
-without depending on their position in a column.
+Use your mail client's plain-text compose mode. The client controls MIME and
+sending; display columns are not email transport line limits.
 
-Lists and blockquotes reserve room for their prefixes before wrapping.
-Unicode text wraps at complete grapheme clusters, so a combining accent or
-joined emoji is not split. Display width is estimated with `wcwidth` for
-monospaced text; actual rendering varies with fonts and mail clients.
+[Example Markdown](examples/email.md) · [Plain-text output](examples/email.txt)
 
-## How it works
+## Watching
 
-1. `markdown-it-py` parses CommonMark plus tables, strikethrough, and
-   autolinks.
-2. The renderer retains protected content through wrapping, handles email
-   signature separators before Markdown heading rules, and renders headings,
-   lists, quotes, and tables.
-3. The CLI strictly decodes UTF-8 (BOM tolerant), saves files atomically, and
-   writes plain text to the selected outputs.
+Watch mode requires a file. Temporary empty or invalid input keeps the last
+successful output. Wayland clipboard contents survive command and watch exit.
+Wayland copying times out after five seconds.
 
-## Limitations
-
-- Clipboard copying requires macOS and AppKit.
-- Bold and italic styling is removed. Link destinations remain text; the
-  mail client decides whether to make them clickable.
-- Images are references, not attachments. YAML front matter, footnotes,
-  math, and Mermaid diagrams do not have dedicated conversion support.
-- Tables use spaces, so proportional fonts may break their alignment.
-- The tool does not generate `.eml`, set MIME headers, or send mail. Pure
-  `text/plain` delivery must be selected and checked in the mail client.
-- Clients may reflow text or collapse quoted sections in their display.
+Inherited `WAYLAND_SOCKET` connections are supported. Anonymous connections
+allow one-shot copying only; watching requires a reconnectable endpoint.
 
 ## Development
 
-```bash
+```sh
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m unittest discover -s tests -v
@@ -221,40 +100,12 @@ python3 -m venv .venv
 .venv/bin/black --check src tests
 ```
 
-The `./md2plain` script in the repository root is a development launcher; it
-runs the package from `.venv`. Installed users get the `md2plain` command from
-`pyproject.toml`.
+Real Wayland tests require Sway and `wl-clipboard`. They start a private headless
+session and run separately in Ubuntu CI:
 
-## Releasing
-
-Releases are published by GitHub Actions through
-[PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/), so no
-API token is stored in the repository.
-
-One-time setup on PyPI: open the `md2plain` project, go to
-**Settings → Publishing**, and add a trusted publisher with:
-
-| Field | Value |
-|---|---|
-| Owner | `hoshF` |
-| Repository | `md2plain` |
-| Workflow | `release.yml` |
-| Environment | `pypi` |
-
-To cut a release:
-
-1. Bump `__version__` in `src/md2plain/__init__.py`.
-2. Add an entry to [CHANGELOG.md](CHANGELOG.md).
-3. Commit, tag, and push:
-
-```bash
-git tag v0.1.2
-git push origin v0.1.2
+```sh
+MD2PLAIN_WAYLAND_TEST=1 .venv/bin/python -m unittest discover \
+  -s tests -p test_wayland_integration.py -v
 ```
 
-The `Release` workflow then checks that the tag matches the package version,
-runs the tests, builds the sdist and wheel, and publishes them to PyPI.
-
-## License
-
-[MIT](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
+[MIT](LICENSE) · [Changelog](CHANGELOG.md)
