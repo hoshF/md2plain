@@ -64,6 +64,25 @@ def read_input(path: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def output_path_for(input_path: str, output_path: str) -> str:
+    """Resolve a directory destination without creating it or changing file paths."""
+    target = Path(output_path).expanduser()
+    directory_hint = output_path.endswith(os.sep) or (
+        os.altsep is not None and output_path.endswith(os.altsep)
+    )
+    if directory_hint or target.is_dir():
+        if input_path == "-":
+            raise CliError(
+                "Directory output requires an input filename; "
+                "when reading stdin, specify an output filename with -o FILE."
+            )
+        name = Path(input_path).name
+        if not name or name in (".", ".."):
+            raise CliError("Cannot infer an output filename from the input path.")
+        target = target / Path(name).with_suffix(".txt")
+    return str(target)
+
+
 def validate_output(input_path: str, output_path: str | None) -> None:
     """Protect the source even when either path is a link or changes in watch."""
     if input_path == "-" or not output_path:
@@ -210,14 +229,17 @@ def watch_input(args: argparse.Namespace, convert: Callable[[str], None]) -> Non
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="md2plain",
-        description="Convert Markdown to plain-text email and copy it to the clipboard.",
+        description="Convert Markdown letters to plain-text email bodies.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("input", help="Markdown file, or - for stdin")
     parser.add_argument(
-        "-o", "--output", help="save UTF-8 plain text to a file (without copying)"
+        "-o",
+        "--output",
+        metavar="FILE_OR_DIR",
+        help="save UTF-8 text to a file or directory (without copying)",
     )
     parser.add_argument(
         "--print",
@@ -265,7 +287,7 @@ def main() -> int:
             if args.input != "-":
                 args.input = str(Path(args.input).expanduser())
             if args.output:
-                args.output = str(Path(args.output).expanduser())
+                args.output = output_path_for(args.input, args.output)
         except (OSError, RuntimeError) as exc:
             raise CliError(f"Cannot expand file path: {exc}") from exc
         validate_output(args.input, args.output)

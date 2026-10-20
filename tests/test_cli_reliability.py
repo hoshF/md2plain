@@ -111,6 +111,110 @@ class CliReliability(CliFixture):
         self.assertEqual((out, err), ("", ""))
         copy.assert_not_called()
 
+    def test_existing_directory_output_uses_input_name(self):
+        directory = self.root / "letters.v2"
+        directory.mkdir()
+        for suffix in ("", "/"):
+            with self.subTest(suffix=suffix):
+                result, out, err, copy = self.run_main(
+                    self.source, "-o", str(directory) + suffix
+                )
+                self.assertEqual(result, 0)
+                self.assertEqual(
+                    (directory / "letter.txt").read_text(), "Dear A,\nHello.\n"
+                )
+                self.assertEqual((out, err), ("", ""))
+                copy.assert_not_called()
+
+    def test_new_directory_output_expands_home_and_preserves_basename(self):
+        source = self.root / "项目.草稿.markdown"
+        source.write_text("正文\n", encoding="utf-8")
+        directory = self.root / "新目录 空格" / "nested"
+        with patch.dict(os.environ, {"HOME": str(self.root)}):
+            result, out, err, copy = self.run_main(
+                "~/项目.草稿.markdown", "-o", "~/新目录 空格/nested/"
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual((directory / "项目.草稿.txt").read_text(), "正文\n")
+        self.assertEqual((out, err), ("", ""))
+        copy.assert_not_called()
+
+    def test_extensionless_output_without_directory_hint_remains_a_file(self):
+        target = self.root / "saved-letter"
+        result, _, _, copy = self.run_main(self.source, "-o", target)
+        self.assertEqual(result, 0)
+        self.assertTrue(target.is_file())
+        self.assertEqual(target.read_text(), "Dear A,\nHello.\n")
+        copy.assert_not_called()
+
+    def test_directory_symlink_output_uses_input_name(self):
+        directory = self.root / "letters"
+        directory.mkdir()
+        alias = self.root / "linked-directory"
+        alias.symlink_to(directory, target_is_directory=True)
+        result, _, _, copy = self.run_main(self.source, "-o", alias)
+        self.assertEqual(result, 0)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual((directory / "letter.txt").read_text(), "Dear A,\nHello.\n")
+        copy.assert_not_called()
+
+    def test_directory_output_preserves_print_and_explicit_copy(self):
+        result, out, err, copy = self.run_main(
+            self.source, "-o", self.root, "--print", "--copy"
+        )
+        self.assertEqual(result, 0)
+        self.assertEqual(out, self.output.read_text())
+        copy.assert_called_once_with(out)
+        self.assertIn("Copied", err)
+
+    def test_directory_output_rejects_inferred_source_aliases(self):
+        directory = self.root / "letters"
+        directory.mkdir()
+        target = directory / "letter.txt"
+        original = self.source.read_bytes()
+        for link in ("symbolic", "hard"):
+            with self.subTest(link=link):
+                if link == "symbolic":
+                    target.symlink_to(self.source)
+                else:
+                    os.link(self.source, target)
+                result, out, err, copy = self.run_main(self.source, "-o", directory)
+                self.assertEqual(result, 1)
+                self.assertEqual(out, "")
+                self.assertIn("different files", err)
+                self.assertEqual(self.source.read_bytes(), original)
+                copy.assert_not_called()
+                target.unlink()
+        result, _, err, copy = self.run_main(self.source, "-o", self.root)
+        self.assertEqual(result, 0)
+        # A .txt input in its own directory must also be protected.
+        result, _, err, copy = self.run_main(self.output, "-o", self.root)
+        self.assertEqual(result, 1)
+        self.assertIn("different files", err)
+        copy.assert_not_called()
+
+    def test_directory_output_for_stdin_requires_explicit_filename(self):
+        for directory in (str(self.root), str(self.root / "uncreated") + "/"):
+            with self.subTest(directory=directory):
+                result, out, err, copy = self.run_main(
+                    "-", "-o", directory, stdin=io.StringIO("Hello\n")
+                )
+                self.assertEqual(result, 1)
+                self.assertEqual(out, "")
+                self.assertIn("stdin", err)
+                self.assertIn("output filename", err)
+                copy.assert_not_called()
+        self.assertFalse((self.root / "uncreated").exists())
+
+    def test_invalid_input_does_not_create_directory_output(self):
+        self.source.write_bytes(b"\xff")
+        directory = self.root / "uncreated"
+        result, _, err, copy = self.run_main(self.source, "-o", str(directory) + "/")
+        self.assertEqual(result, 1)
+        self.assertIn("UTF-8", err)
+        self.assertFalse(directory.exists())
+        copy.assert_not_called()
+
     def test_quoted_tilde_paths_are_expanded(self):
         target = self.root / "Documents" / "信件.txt"
         with patch.dict(os.environ, {"HOME": str(self.root)}):
@@ -532,6 +636,28 @@ class WatchReliability(CliFixture):
         self.assertEqual(
             (self.root / "nested/letter.txt").read_text(), "Dear A,\nHello.\n"
         )
+        copy.assert_not_called()
+
+    def test_watch_directory_output_keeps_derived_filename(self):
+        directory = self.root / "new letters"
+        output = directory / "letter.txt"
+        observed = []
+
+        def watch(args, convert):
+            observed.append(args.output)
+            convert(cli.read_input(args.input))
+            self.source.write_text("Updated\n", encoding="utf-8")
+            convert(cli.read_input(args.input))
+            raise KeyboardInterrupt
+
+        with patch.object(cli, "watch_input", side_effect=watch):
+            result, _, err, copy = self.run_main(
+                self.source, "--watch", "-o", str(directory) + "/"
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(observed, [str(output)])
+        self.assertEqual(output.read_text(), "Updated\n")
+        self.assertIn("Stopped watching", err)
         copy.assert_not_called()
 
     def test_watch_invalid_inherited_connection_fails_before_publishing(self):

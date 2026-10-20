@@ -8,27 +8,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Linux Wayland clipboard support through the system `wl-clipboard` package,
-  with UTF-8 plain-text output, actionable connection errors, and a five-second
-  timeout. Clipboard contents remain available for repeated pastes after the
-  command or watch mode exits.
-- `--copy` to explicitly request clipboard output alongside a file or stdout;
-  `--copy` and `--no-copy` are mutually exclusive.
-- Standard `~` expansion for input and output paths, including quoted paths,
-  and automatic creation of missing output directories after valid conversion.
-- Regression coverage for output combinations, paths, and Wayland clipboard
-  failures, plus a separate private headless Sway integration test job.
+- Linux Wayland clipboard via `wl-clipboard`, with a five-second timeout and
+  background ownership for repeated pastes after command or watch exit.
+- `--copy` to enable clipboard output explicitly; conflicts with `--no-copy`.
+- `~` expansion and automatic creation of output directories.
+- Directory output derives `name.txt` from the input filename. New directories
+  require a trailing `/`; stdin requires an explicit output filename.
+- Isolated headless Sway integration tests in a separate Ubuntu CI job.
 
 ### Changed
 
-- `-o FILE` now saves only to the file by default. Users upgrading from 0.1.x
-  who want both outputs must use `-o FILE --copy`. This applies to watch mode
-  too. `--print -o FILE` prints and saves without copying unless `--copy` is set.
-- Document macOS and Linux Wayland requirements, clipboard-free file/stdout
-  usage, and that arbitrary output suffixes still contain UTF-8 plain text.
-- Limit source archives to project sources, tests, examples, and documentation,
-  excluding unrelated local draft letters and conversion results.
-- Prepare package version 0.2.0; no new Python dependencies are required.
+- `-o` now saves without copying, including in watch mode. Use `-o PATH --copy`
+  to retain 0.1.x behavior; `--print` also accepts `--copy`.
+- Source archives include only project sources, tests, examples, and
+  documentation; local drafts and conversion results are excluded.
 
 ## [0.1.1] - 2026-10-19
 
